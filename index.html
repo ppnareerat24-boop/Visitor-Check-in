@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ระบบสแกนใบหน้าบุคคลภายนอก</title>
 <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
@@ -239,6 +240,7 @@ const S = {
   loginRole:'admin', loginError:'',
 
   modelsLoaded:false, modelState:'loading', // loading | ok | error
+  storageState:'checking', // checking | persisted | not-persisted | unsupported
 
   visitors:[],   // {id,name,status,reason,descriptor:[128],photo,createdAt}
   history:[],    // {id,visitorId,name,status,reason,photo,confidence,date,time,ts,verifiedBy}
@@ -301,10 +303,45 @@ function dbDelete(name, id){
   });
 }
 async function loadUsers(){ return (await dbAll('visitors')).sort((a,b)=>b.createdAt-a.createdAt); }
-async function saveUser(v){ await dbPut('visitors', v); }
-async function removeUser(id){ await dbDelete('visitors', id); }
+async function saveUser(v){ return await dbPut('visitors', v); }
+async function removeUser(id){ return await dbDelete('visitors', id); }
 async function loadHistory(){ return (await dbAll('history')).sort((a,b)=>b.ts-a.ts); }
-async function saveHistoryEntry(h){ await dbPut('history', h); }
+async function saveHistoryEntry(h){ return await dbPut('history', h); }
+
+/* ---- request persistent storage so the browser won't silently evict data
+   under disk pressure (this is what actually keeps IndexedDB data "safe") ---- */
+async function ensurePersistentStorage(){
+  if(!(navigator.storage && navigator.storage.persist)){
+    S.storageState = 'unsupported';
+    refreshStorageChip();
+    return;
+  }
+  try{
+    const already = await navigator.storage.persisted();
+    if(already){
+      S.storageState = 'persisted';
+    } else {
+      const granted = await navigator.storage.persist();
+      S.storageState = granted ? 'persisted' : 'not-persisted';
+    }
+  }catch(e){
+    S.storageState = 'unsupported';
+  }
+  refreshStorageChip();
+}
+function refreshStorageChip(){
+  document.querySelectorAll('.storage-chip').forEach(chip=>{
+    chip.classList.remove('ok','bad','loading');
+    const label = chip.querySelector('span:last-child');
+    if(S.storageState==='persisted'){ chip.classList.add('ok'); if(label) label.textContent='บันทึกถาวรในเบราว์เซอร์'; }
+    else if(S.storageState==='not-persisted'){ chip.classList.add('bad'); if(label) label.textContent='พื้นที่จัดเก็บอาจถูกล้างได้ — แนะนำสำรองข้อมูล'; }
+    else if(S.storageState==='unsupported'){ chip.classList.add('bad'); if(label) label.textContent='เบราว์เซอร์ไม่รองรับการล็อกพื้นที่ถาวร'; }
+    else { chip.classList.add('loading'); if(label) label.textContent='กำลังตรวจสอบพื้นที่จัดเก็บ...'; }
+  });
+}
+function storageChipHtml(){
+  return `<div class="model-chip storage-chip"><span class="dot"></span><span>กำลังตรวจสอบพื้นที่จัดเก็บ...</span></div>`;
+}
 
 /* =========================================================
    MISC HELPERS
@@ -533,18 +570,20 @@ function iconCamera(){ return `<svg width="22" height="22" viewBox="0 0 24 24" f
 
 function render(){
   const app = document.getElementById('app');
-  if(S.view==='login'){ app.innerHTML = renderLogin(); attachLoginEvents(); refreshModelChip(); return; }
+  if(S.view==='login'){ app.innerHTML = renderLogin(); attachLoginEvents(); refreshModelChip(); refreshStorageChip(); return; }
 
   app.innerHTML = `
     ${renderBrandbar()}
     ${renderTabnav()}
     <div id="view-slot">${renderCurrentView()}</div>
     <div class="footnote">
-      ข้อมูลใบหน้า (descriptor) รูปถ่าย และประวัติเช็คอิน จัดเก็บใน IndexedDB ของเบราว์เซอร์เครื่องนี้เท่านั้น ไม่ส่งออกนอกเครื่อง<br>
+      ข้อมูลใบหน้า (descriptor) รูปถ่าย และประวัติเช็คอิน จัดเก็บใน IndexedDB ของเบราว์เซอร์เครื่องนี้เท่านั้น (ระบบขอสิทธิ์ "พื้นที่จัดเก็บถาวร" จากเบราว์เซอร์อัตโนมัติเพื่อลดโอกาสข้อมูลถูกล้าง) ไม่ส่งออกนอกเครื่อง<br>
+      ข้อมูลจะหายได้หากล้างแคช/ข้อมูลเว็บไซต์ของเบราว์เซอร์ หรือเปลี่ยนไปใช้เบราว์เซอร์/อุปกรณ์อื่น — แนะนำกดปุ่ม "ส่งออกข้อมูล (Excel)" ในหน้าฐานข้อมูลเป็นประจำเพื่อสำรองข้อมูลไว้<br>
       หน้าจอเข้าสู่ระบบนี้เป็นการสาธิตแบ่งสิทธิ์การใช้งาน ไม่ใช่ระบบยืนยันตัวตนที่ปลอดภัยสำหรับใช้งานจริง — ควรทำระบบล็อกอินฝั่งเซิร์ฟเวอร์ก่อนใช้งานจริง
     </div>
   `;
   refreshModelChip();
+  refreshStorageChip();
   attachViewEvents();
   if(S.view==='scan' && S.scanDetectTimer===null && !S.scanCaptured && S.scanStatus==='idle'){
     // camera loop may need (re)starting after a full render triggered elsewhere
@@ -563,6 +602,7 @@ function renderBrandbar(){
     </div>
     <div class="brand-side">
       ${modelChipHtml()}
+      ${storageChipHtml()}
       <div class="session-chip">
         <span class="dot"></span>
         <span>เข้าสู่ระบบ: <b>${esc(S.username)}</b> (ผู้ดูแลระบบ)</span>
@@ -619,7 +659,7 @@ function renderLogin(){
         <input id="login-pass" type="password" placeholder="password" autocomplete="current-password">
       </div>
       <button class="btn btn-primary" onclick="attemptLogin()">เข้าสู่ระบบ</button>
-      <div style="display:flex;justify-content:center;margin-top:14px;">${modelChipHtml()}</div>
+      <div style="display:flex;justify-content:center;gap:8px;margin-top:14px;flex-wrap:wrap;">${modelChipHtml()}${storageChipHtml()}</div>
       <div class="hint-box">
         DEMO CREDENTIALS (ตัวอย่างเพื่อสาธิตเท่านั้น ไม่ปลอดภัยสำหรับใช้งานจริง)<br>
         admin &nbsp;/&nbsp; user: admin &nbsp; pass: admin123
@@ -798,8 +838,14 @@ async function confirmLog(){
     date: fmtDate(now), time: fmtTime(now), ts: now.getTime(),
     verifiedBy: S.username
   };
+  try{
+    await saveHistoryEntry(entry);
+  }catch(err){
+    console.error(err);
+    toast('บันทึกไม่สำเร็จ กรุณาลองใหม่ (พื้นที่จัดเก็บอาจเต็มหรือถูกจำกัด)', true);
+    return;
+  }
   S.history.unshift(entry);
-  await saveHistoryEntry(entry);
   S.scanStatus = 'logged';
   render();
   toast('บันทึกการเข้า-ออกเรียบร้อย');
@@ -894,8 +940,15 @@ async function submitRegister(){
     photo: S.regCaptured.photo,
     createdAt: Date.now()
   };
+  try{
+    await saveUser(rec);
+  }catch(err){
+    console.error(err);
+    S.regError = 'บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่ (พื้นที่จัดเก็บอาจเต็มหรือถูกจำกัด)';
+    render();
+    return;
+  }
   S.visitors.unshift(rec);
-  await saveUser(rec);
   rebuildMatcher();
   toast('ลงทะเบียนผู้ใช้ใหม่เรียบร้อย');
   S.regCaptured=null; S.regError=''; S.regStatusOther=false; S.regLive=null;
@@ -919,8 +972,8 @@ function renderDatabase(){
     </div>
     <div id="db-body">${S.dbTab==='users' ? renderDbUsers() : renderDbHistory()}</div>
     <div class="db-actions" style="margin-top:16px;">
-      <button class="btn btn-ghost btn-sm" onclick="exportData()">ส่งออกข้อมูล (JSON)</button>
-      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">นำเข้าข้อมูล</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportData()">ส่งออกข้อมูล (Excel)</button>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">นำเข้าข้อมูล (JSON)</button>
       <input type="file" id="import-file" accept="application/json" style="display:none" onchange="importData(event)">
     </div>
   </div>`;
@@ -998,21 +1051,55 @@ function emptyState(msg){
 }
 async function deleteUser(id){
   if(!confirm('ยืนยันการลบผู้ใช้นี้ออกจากฐานข้อมูลใบหน้า?')) return;
+  try{
+    await removeUser(id);
+  }catch(err){
+    console.error(err);
+    toast('ลบผู้ใช้ไม่สำเร็จ กรุณาลองใหม่', true);
+    return;
+  }
   S.visitors = S.visitors.filter(u=>u.id!==id);
-  await removeUser(id);
   rebuildMatcher();
   toast('ลบผู้ใช้เรียบร้อย');
   refreshDbOnly();
 }
 
-/* ---- export / import backup ---- */
+/* ---- export (Excel) / import (JSON backup) ---- */
 function exportData(){
-  const data = { visitors:S.visitors, history:S.history, exportedAt: Date.now() };
-  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `face-checkin-backup-${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
+  if(typeof XLSX === 'undefined'){ toast('ไลบรารี Excel โหลดไม่สำเร็จ กรุณาลองใหม่', true); return; }
+
+  // ชีต 1: รายชื่อผู้ลงทะเบียน
+  const usersRows = S.visitors.map(u=>{
+    const created = new Date(u.createdAt);
+    return {
+      'ชื่อ-นามสกุล': u.name,
+      'สถานะ': u.status,
+      'เหตุผลในการเข้ามา': u.reason || '-',
+      'วันที่ลงทะเบียน': fmtDate(created),
+      'เวลาที่ลงทะเบียน': fmtTime(created)
+    };
+  });
+
+  // ชีต 2: ประวัติการบันทึกเข้า-ออก
+  const historyRows = S.history.map((h,i)=>({
+    '#': i+1,
+    'ชื่อ-นามสกุล': h.name,
+    'สถานะ': h.status,
+    'เหตุผลในการเข้ามา': h.reason || '-',
+    'ความเชื่อมั่น': h.confidence!=null ? h.confidence+'%' : 'ด้วยตนเอง',
+    'วันที่': h.date,
+    'เวลา': h.time,
+    'ผู้ยืนยัน': h.verifiedBy || '-'
+  }));
+
+  const wb = XLSX.utils.book_new();
+  const wsUsers = XLSX.utils.json_to_sheet(usersRows.length ? usersRows : [{'ชื่อ-นามสกุล':''}]);
+  const wsHistory = XLSX.utils.json_to_sheet(historyRows.length ? historyRows : [{'#':''}]);
+  XLSX.utils.book_append_sheet(wb, wsUsers, 'รายชื่อผู้ลงทะเบียน');
+  XLSX.utils.book_append_sheet(wb, wsHistory, 'ประวัติบันทึก');
+
+  XLSX.writeFile(wb, `face-checkin-backup-${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('ส่งออกข้อมูลเป็น Excel เรียบร้อย');
 }
 async function importData(e){
   const file = e.target.files[0];
@@ -1054,6 +1141,7 @@ async function boot(){
   rebuildMatcher();
   render();
   loadModels(); // fire and forget; UI updates via refreshModelChip()
+  ensurePersistentStorage(); // fire and forget; UI updates via refreshStorageChip()
 }
 boot();
 </script>
