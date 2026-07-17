@@ -258,6 +258,7 @@ const S = {
   scanStatus:'idle',      // idle | matched | nomatch | logged
   selectedMatchId:null, matchConfidence:null,
   manualSearch:'',
+  scanRegError:'', scanRegStatusOther:false,
 
   // register view
   regCamStream:null, regDetectTimer:null,
@@ -541,6 +542,7 @@ function resetViewState(view){
   if(view==='scan'){
     S.scanCaptured=null; S.scanStatus='idle'; S.scanLive=null;
     S.selectedMatchId=null; S.matchConfidence=null; S.manualSearch='';
+    S.scanRegError=''; S.scanRegStatusOther=false;
   }
   if(view==='register'){
     S.regCaptured=null; S.regError=''; S.regStatusOther=false; S.regLive=null;
@@ -788,9 +790,97 @@ function renderNomatchPanel(){
       <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="retryScan()">สแกนใหม่</button>
       <button class="btn btn-primary btn-sm" style="flex:1;" ${S.selectedMatchId?'':'disabled'} onclick="acceptManualMatch()">ยืนยันตรงกัน</button>
     </div>
-    ${S.role==='admin' ? `<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="goto('register')">ไปยังหน้าลงทะเบียนผู้ใช้ใหม่</button>`
-                        : `<div style="font-size:12px;color:var(--ink-faint);margin-top:8px;">หากยังไม่พบ กรุณาแจ้งผู้ดูแลระบบเพื่อลงทะเบียนผู้ใช้ใหม่</div>`}
+    ${S.role==='admin' ? renderInlineRegisterBlock() : `<div style="font-size:12px;color:var(--ink-faint);margin-top:8px;">หากยังไม่พบ กรุณาแจ้งผู้ดูแลระบบเพื่อลงทะเบียนผู้ใช้ใหม่</div>`}
   </div>`;
+}
+
+function renderInlineRegisterBlock(){
+  const cap = S.scanCaptured;
+  return `
+  <div style="margin-top:18px; padding-top:16px; border-top:1px dashed var(--line);">
+    <p style="font-size:13px; color:var(--ink-dim); margin:0 0 12px; font-weight:600;">หรือลงทะเบียนผู้ใช้ใหม่จากภาพที่เพิ่งสแกน แล้วบันทึกการเข้าทันที</p>
+    ${S.scanRegError ? `<div class="error-msg">${esc(S.scanRegError)}</div>` : ''}
+    <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap;">
+      ${cap ? `<img src="${cap.photo}" style="width:72px;height:72px;border-radius:10px;object-fit:cover;border:1px solid var(--line);flex-shrink:0;">` : ''}
+      <div style="flex:1; min-width:200px;">
+        <div class="field" style="margin-bottom:10px;">
+          <label>ชื่อ-นามสกุล</label>
+          <input id="scan-reg-name" type="text" placeholder="เช่น สมชาย ใจดี">
+        </div>
+        <div class="two-col">
+          <div class="field">
+            <label>สถานะ</label>
+            <select id="scan-reg-status" onchange="onScanRegStatusChange(this.value)">
+              ${STATUS_OPTIONS.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" id="scan-reg-status-other-wrap" style="${S.scanRegStatusOther?'':'display:none;'}">
+            <label>ระบุสถานะ</label>
+            <input id="scan-reg-status-other" type="text" placeholder="ระบุ...">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="field" style="margin-top:4px;">
+      <label>เหตุผลในการเข้ามา</label>
+      <textarea id="scan-reg-reason" placeholder="เช่น มาติดต่อธุรการ / รับ-ส่งนักเรียน"></textarea>
+    </div>
+    <button class="btn btn-primary btn-sm" style="width:100%;" ${cap ? '' : 'disabled'} onclick="submitInlineRegister()">ลงทะเบียนและบันทึกการเข้า-ออก</button>
+  </div>`;
+}
+function onScanRegStatusChange(v){
+  S.scanRegStatusOther = (v==='อื่นๆ');
+  const wrap = document.getElementById('scan-reg-status-other-wrap');
+  if(wrap) wrap.style.display = S.scanRegStatusOther ? '' : 'none';
+}
+async function submitInlineRegister(){
+  if(!S.scanCaptured){ S.scanRegError='ไม่พบภาพที่สแกนไว้ กรุณาสแกนใหม่'; refreshScanOnly(); return; }
+  const nameEl = document.getElementById('scan-reg-name');
+  const name = nameEl ? nameEl.value.trim() : '';
+  if(!name){ S.scanRegError='กรุณากรอกชื่อ-นามสกุล'; refreshScanOnly(); return; }
+  const statusSel = document.getElementById('scan-reg-status').value;
+  const statusOther = document.getElementById('scan-reg-status-other')?.value.trim();
+  const status = statusSel==='อื่นๆ' ? (statusOther || 'อื่นๆ') : statusSel;
+  const reason = document.getElementById('scan-reg-reason').value.trim();
+
+  const rec = {
+    id: uid(), name, status, reason,
+    descriptor: S.scanCaptured.descriptor,
+    photo: S.scanCaptured.photo,
+    createdAt: Date.now()
+  };
+  try{
+    await saveUser(rec);
+  }catch(err){
+    console.error(err);
+    S.scanRegError = 'บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่ (พื้นที่จัดเก็บอาจเต็มหรือถูกจำกัด)';
+    refreshScanOnly();
+    return;
+  }
+  S.visitors.unshift(rec);
+  rebuildMatcher();
+
+  const now = new Date();
+  const entry = {
+    id: uid(), visitorId:rec.id, name:rec.name, status:rec.status, reason:rec.reason||'',
+    photo: rec.photo, confidence: null,
+    date: fmtDate(now), time: fmtTime(now), ts: now.getTime(),
+    verifiedBy: S.username
+  };
+  try{
+    await saveHistoryEntry(entry);
+  }catch(err){
+    console.error(err);
+    toast('ลงทะเบียนสำเร็จ แต่บันทึกการเข้าไม่สำเร็จ กรุณาลองสแกนใหม่', true);
+    S.scanRegError=''; S.scanRegStatusOther=false;
+    render();
+    return;
+  }
+  S.history.unshift(entry);
+  S.scanStatus = 'logged';
+  S.scanRegError=''; S.scanRegStatusOther=false;
+  render();
+  toast('ลงทะเบียนและบันทึกการเข้าเรียบร้อย');
 }
 function pickManualMatch(id){ S.selectedMatchId = id; refreshScanOnly(); }
 function acceptManualMatch(){
