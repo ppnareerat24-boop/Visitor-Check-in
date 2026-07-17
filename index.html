@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ระบบสแกนใบหน้าบุคคลภายนอก</title>
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+:root{
+  --bg-void:#0a1016;
+  --bg-panel:#111a22;
+  --bg-panel-raised:#16222c;
+  --line:#233240;
+  --line-soft:#1a2530;
+  --teal:#20b8d8;
+  --teal-dim:#14636f;
+  --teal-glow: rgba(32,184,216,0.35);
+  --amber:#ffb84d;
+  --green:#3fd398;
+  --red:#ff6b57;
+  --ink:#eaf4f6;
+  --ink-dim:#7f97a3;
+  --ink-faint:#4c6472;
+  --radius:14px;
+  --font-display:'Prompt', sans-serif;
+  --font-body:'Sarabun', sans-serif;
+  --font-mono:'Space Mono', monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--font-body);
+  background:
+    radial-gradient(ellipse 900px 500px at 15% -10%, rgba(32,184,216,0.10), transparent 60%),
+    radial-gradient(ellipse 700px 500px at 100% 10%, rgba(63,211,152,0.06), transparent 55%),
+    var(--bg-void);
+  color:var(--ink);
+  min-height:100vh;
+  padding:28px 16px 60px;
+}
+#app{max-width:1180px;margin:0 auto;}
+
+/* ---------- top brand bar ---------- */
+.brandbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:26px;flex-wrap:wrap;gap:12px;}
+.brand{display:flex;align-items:center;gap:12px;}
+.brand-mark{
+  width:42px;height:42px;border-radius:10px;
+  background:linear-gradient(145deg,var(--teal),var(--teal-dim));
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 0 0 1px rgba(32,184,216,0.4), 0 8px 20px -6px var(--teal-glow);
+  flex-shrink:0;
+}
+.brand-mark svg{width:22px;height:22px;}
+.brand-text .eyebrow{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.16em;color:var(--teal);text-transform:uppercase;}
+.brand-text h1{font-family:var(--font-display);font-size:19px;font-weight:700;margin:1px 0 0;color:var(--ink);}
+.brand-side{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.session-chip{display:flex;align-items:center;gap:10px;background:var(--bg-panel);border:1px solid var(--line);padding:8px 14px;border-radius:100px;}
+.session-chip .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);}
+.session-chip span{font-size:13.5px;color:var(--ink-dim);}
+.session-chip b{color:var(--ink);font-weight:600;}
+.session-chip button{background:none;border:none;color:var(--red);font-family:var(--font-body);font-size:13px;cursor:pointer;margin-left:6px;padding:4px 8px;border-radius:6px;}
+.session-chip button:hover{background:rgba(255,107,87,0.12);}
+.model-chip{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;padding:7px 12px;border-radius:100px;border:1px solid var(--line);background:var(--bg-panel);color:var(--ink-dim);}
+.model-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--ink-faint);}
+.model-chip.ok .dot{background:var(--green);box-shadow:0 0 6px var(--green);}
+.model-chip.bad .dot{background:var(--red);}
+.model-chip.loading .dot{background:var(--amber);animation:pulse 1.2s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* ---------- tab nav ---------- */
+.tabnav{display:flex;gap:6px;background:var(--bg-panel);border:1px solid var(--line);border-radius:12px;padding:6px;margin-bottom:22px;overflow-x:auto;}
+.tabnav button{
+  flex:1;min-width:150px;
+  font-family:var(--font-display);font-size:14.5px;font-weight:600;
+  padding:11px 14px;border-radius:9px;border:none;cursor:pointer;
+  background:transparent;color:var(--ink-dim);
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:all .15s ease;
+  white-space:nowrap;
+}
+.tabnav button.active{background:linear-gradient(145deg,var(--teal),var(--teal-dim));color:#04181c;box-shadow:0 4px 14px -4px var(--teal-glow);}
+.tabnav button:not(.active):hover{background:var(--bg-panel-raised);color:var(--ink);}
+
+/* ---------- generic panel/card ---------- */
+.panel{background:var(--bg-panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px;}
+.panel + .panel{margin-top:18px;}
+.panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:18px;flex-wrap:wrap;}
+.panel-head h2{font-family:var(--font-display);font-size:18px;margin:0;font-weight:700;}
+.panel-head .sub{font-size:12.5px;color:var(--ink-faint);font-family:var(--font-mono);letter-spacing:.04em;}
+
+/* ---------- login screen ---------- */
+.login-wrap{display:flex;min-height:70vh;align-items:center;justify-content:center;padding:20px 0;}
+.login-card{width:100%;max-width:440px;background:var(--bg-panel);border:1px solid var(--line);border-radius:20px;padding:36px 34px;box-shadow:0 30px 60px -30px rgba(0,0,0,0.6);}
+.login-logo{width:56px;height:56px;border-radius:14px;background:linear-gradient(145deg,var(--teal),var(--teal-dim));display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 0 0 1px rgba(32,184,216,.4),0 10px 30px -8px var(--teal-glow);}
+.login-logo svg{width:28px;height:28px;}
+.login-card h2{font-family:var(--font-display);text-align:center;font-size:21px;margin:0 0 4px;}
+.login-card p.desc{text-align:center;color:var(--ink-dim);font-size:13.5px;margin:0 0 26px;}
+.role-toggle{display:flex;background:var(--bg-void);border:1px solid var(--line);border-radius:10px;padding:4px;margin-bottom:22px;}
+.role-toggle button{flex:1;padding:10px;border:none;background:transparent;color:var(--ink-dim);font-family:var(--font-display);font-weight:600;font-size:13.5px;border-radius:7px;cursor:pointer;}
+.role-toggle button.active{background:var(--teal);color:#04181c;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12.5px;color:var(--ink-dim);margin-bottom:6px;font-weight:500;}
+.field input,.field select,.field textarea{
+  width:100%;background:var(--bg-void);border:1px solid var(--line);color:var(--ink);
+  padding:11px 13px;border-radius:9px;font-family:var(--font-body);font-size:14.5px;outline:none;
+  transition:border-color .15s;
+}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-glow);}
+.field textarea{resize:vertical;min-height:70px;}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  font-family:var(--font-display);font-weight:600;font-size:14.5px;
+  padding:12px 20px;border-radius:9px;border:none;cursor:pointer;width:100%;
+  transition:transform .1s ease, box-shadow .15s ease;
+}
+.btn:active{transform:scale(.98);}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.btn-primary{background:linear-gradient(145deg,var(--teal),var(--teal-dim));color:#04181c;box-shadow:0 8px 20px -8px var(--teal-glow);}
+.btn-primary:hover{box-shadow:0 10px 26px -6px var(--teal-glow);}
+.btn-ghost{background:var(--bg-void);color:var(--ink);border:1px solid var(--line);}
+.btn-ghost:hover{border-color:var(--teal-dim);}
+.btn-danger{background:rgba(255,107,87,0.12);color:var(--red);border:1px solid rgba(255,107,87,0.3);}
+.btn-danger:hover{background:rgba(255,107,87,0.2);}
+.btn-sm{padding:8px 14px;font-size:13px;width:auto;}
+.btn-link{background:none;border:none;color:var(--teal);font-family:var(--font-body);font-size:12.5px;cursor:pointer;text-decoration:underline;padding:4px 0;}
+.error-msg{background:rgba(255,107,87,0.1);border:1px solid rgba(255,107,87,0.35);color:var(--red);font-size:13px;padding:10px 13px;border-radius:8px;margin-bottom:16px;}
+.hint-box{margin-top:20px;padding:12px 14px;background:var(--bg-void);border:1px dashed var(--line);border-radius:9px;font-size:12px;color:var(--ink-faint);font-family:var(--font-mono);line-height:1.7;}
+
+/* ---------- face camera views ---------- */
+.scan-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:22px;}
+@media (max-width:820px){.scan-grid{grid-template-columns:1fr;}}
+.camera-frame{
+  position:relative;aspect-ratio:4/3;background:#000;border-radius:12px;overflow:hidden;
+  border:1px solid var(--line);
+}
+.camera-frame video, .camera-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
+.overlay-canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;}
+.camera-frame .empty-cam{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--ink-faint);gap:10px;font-size:13px;text-align:center;padding:20px;}
+.reticle{position:absolute;inset:14px;pointer-events:none;}
+.reticle .corner{position:absolute;width:26px;height:26px;border-color:var(--teal);}
+.reticle .tl{top:0;left:0;border-top:3px solid var(--teal);border-left:3px solid var(--teal);border-radius:6px 0 0 0;}
+.reticle .tr{top:0;right:0;border-top:3px solid var(--teal);border-right:3px solid var(--teal);border-radius:0 6px 0 0;}
+.reticle .bl{bottom:0;left:0;border-bottom:3px solid var(--teal);border-left:3px solid var(--teal);border-radius:0 0 0 6px;}
+.reticle .br{bottom:0;right:0;border-bottom:3px solid var(--teal);border-right:3px solid var(--teal);border-radius:0 0 6px 0;}
+.scanline{position:absolute;left:8%;right:8%;height:2px;background:linear-gradient(90deg,transparent,var(--teal),transparent);box-shadow:0 0 12px 2px var(--teal-glow);animation:sweep 2.2s ease-in-out infinite;}
+@keyframes sweep{0%{top:12%;opacity:0;}10%{opacity:1;}50%{top:88%;opacity:1;}60%{opacity:0;}100%{top:12%;opacity:0;}}
+@media (prefers-reduced-motion: reduce){.scanline{animation:none;display:none;}}
+.live-badge{position:absolute;top:10px;left:10px;z-index:5;}
+.readout{
+  font-family:var(--font-mono);background:var(--bg-void);border:1px solid var(--line);border-radius:10px;
+  padding:16px 18px;margin-top:14px;
+}
+.readout .row{display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;color:var(--ink-dim);border-bottom:1px dashed var(--line-soft);}
+.readout .row:last-child{border-bottom:none;}
+.readout .row b{color:var(--ink);font-weight:400;}
+.readout .row .val{color:var(--teal);}
+
+.status-pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11.5px;padding:5px 11px;border-radius:100px;letter-spacing:.03em;}
+.pill-idle{background:rgba(127,151,163,.16);color:var(--ink-dim);backdrop-filter:blur(4px);}
+.pill-scanning{background:rgba(32,184,216,.18);color:var(--teal);backdrop-filter:blur(4px);}
+.pill-matched{background:rgba(63,211,152,.18);color:var(--green);backdrop-filter:blur(4px);}
+.pill-nomatch{background:rgba(255,184,77,.18);color:var(--amber);backdrop-filter:blur(4px);}
+.pill-logged{background:rgba(63,211,152,.18);color:var(--green);}
+
+.match-list{max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-top:10px;}
+.match-row{display:flex;align-items:center;gap:12px;background:var(--bg-panel-raised);border:1px solid var(--line);padding:10px 12px;border-radius:10px;cursor:pointer;}
+.match-row:hover{border-color:var(--teal-dim);}
+.match-row.selected{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-glow);}
+.match-thumb{width:38px;height:38px;border-radius:8px;object-fit:cover;background:var(--line-soft);flex-shrink:0;}
+.match-info{flex:1;min-width:0;}
+.match-info .nm{font-size:13.5px;font-weight:600;color:var(--ink);}
+.match-info .meta{font-size:11.5px;color:var(--ink-faint);}
+
+/* ---------- register view ---------- */
+.reg-grid{display:grid;grid-template-columns:1fr 1.3fr;gap:22px;}
+@media (max-width:820px){.reg-grid{grid-template-columns:1fr;}}
+.photo-box{aspect-ratio:1/1;background:#000;border-radius:12px;overflow:hidden;position:relative;border:1px solid var(--line);}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+@media (max-width:520px){.two-col{grid-template-columns:1fr;}}
+
+/* ---------- database view ---------- */
+.subtabs{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+.subtabs button{
+  font-family:var(--font-display);font-size:13.5px;font-weight:600;padding:9px 16px;border-radius:8px;
+  border:1px solid var(--line);background:var(--bg-void);color:var(--ink-dim);cursor:pointer;
+}
+.subtabs button.active{background:var(--teal-dim);border-color:var(--teal);color:var(--ink);}
+.search-row{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+.search-row input,.search-row select{background:var(--bg-void);border:1px solid var(--line);color:var(--ink);padding:10px 13px;border-radius:8px;font-family:var(--font-body);font-size:13.5px;}
+.search-row input{flex:1;min-width:180px;}
+.db-actions{display:flex;gap:8px;}
+
+table{width:100%;border-collapse:collapse;}
+thead th{
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);
+  text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);
+}
+tbody td{padding:12px;font-size:13.5px;border-bottom:1px solid var(--line-soft);color:var(--ink);vertical-align:middle;}
+tbody tr:hover{background:var(--bg-panel-raised);}
+.row-thumb{width:34px;height:34px;border-radius:7px;object-fit:cover;background:var(--line-soft);}
+.badge{display:inline-block;font-size:11.5px;padding:3px 10px;border-radius:100px;background:rgba(32,184,216,.13);color:var(--teal);font-family:var(--font-mono);}
+.empty-state{text-align:center;padding:50px 20px;color:var(--ink-faint);}
+.empty-state svg{width:40px;height:40px;margin-bottom:12px;opacity:.5;}
+.empty-state p{font-size:13.5px;margin:0;}
+
+/* toast */
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--bg-panel-raised);border:1px solid var(--teal-dim);color:var(--ink);padding:12px 20px;border-radius:100px;font-size:13.5px;box-shadow:0 10px 30px -6px rgba(0,0,0,0.5);z-index:99;display:none;font-family:var(--font-display);font-weight:500;}
+
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+
+.footnote{margin-top:24px;text-align:center;font-size:11.5px;color:var(--ink-faint);font-family:var(--font-mono);line-height:1.9;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+
+<script>
+/* =========================================================
+   CONFIG
+   ========================================================= */
+const CREDS = {
+  admin:{ user:'admin', pass:'admin123' }
+};
+const STATUS_OPTIONS = ['บุคคลภายนอก','ผู้ปกครอง','ผู้รับเหมา/ช่าง','แขกผู้มาติดต่อ','อื่นๆ'];
+const MODEL_URL = './models';
+const MATCH_THRESHOLD = 0.5;      // ยิ่งต่ำยิ่งเข้มงวด
+const RECENT_LOG_WINDOW_MS = 2 * 60 * 1000;
+
+/* =========================================================
+   STATE
+   ========================================================= */
+const S = {
+  view:'login',
+  role:null, username:null,
+  loginRole:'admin', loginError:'',
+
+  modelsLoaded:false, modelState:'loading', // loading | ok | error
+
+  visitors:[],   // {id,name,status,reason,descriptor:[128],photo,createdAt}
+  history:[],    // {id,visitorId,name,status,reason,photo,confidence,date,time,ts,verifiedBy}
+  faceMatcher:null,
+
+  // scan view
+  camStream:null, scanDetectTimer:null,
+  scanLive:null,          // {descriptor, box}
+  scanCaptured:null,      // {photo, descriptor}
+  scanStatus:'idle',      // idle | matched | nomatch | logged
+  selectedMatchId:null, matchConfidence:null,
+  manualSearch:'',
+
+  // register view
+  regCamStream:null, regDetectTimer:null,
+  regLive:null,
+  regCaptured:null,       // {photo, descriptor}
+  regError:'', regStatusOther:false,
+
+  // database view
+  dbTab:'users', dbSearch:'', dbDateFilter:''
+};
+
+/* =========================================================
+   INDEXEDDB STORAGE (local to this browser only)
+   ========================================================= */
+const DB_NAME = 'face_checkin_db_v2';
+const DB_VERSION = 1;
+let db;
+function openDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e)=>{
+      const d = e.target.result;
+      if(!d.objectStoreNames.contains('visitors')) d.createObjectStore('visitors', {keyPath:'id'});
+      if(!d.objectStoreNames.contains('history')) d.createObjectStore('history', {keyPath:'id'});
+    };
+    req.onsuccess = (e)=>{ db = e.target.result; resolve(db); };
+    req.onerror = reject;
+  });
+}
+function txStore(name, mode='readonly'){ return db.transaction(name, mode).objectStore(name); }
+function dbAll(name){
+  return new Promise((resolve, reject)=>{
+    const out=[]; const req = txStore(name).openCursor();
+    req.onsuccess = (e)=>{ const cur=e.target.result; if(cur){ out.push(cur.value); cur.continue(); } else resolve(out); };
+    req.onerror = reject;
+  });
+}
+function dbPut(name, value){
+  return new Promise((resolve, reject)=>{
+    const req = txStore(name,'readwrite').put(value);
+    req.onsuccess = ()=>resolve(value); req.onerror = reject;
+  });
+}
+function dbDelete(name, id){
+  return new Promise((resolve, reject)=>{
+    const req = txStore(name,'readwrite').delete(id);
+    req.onsuccess = ()=>resolve(); req.onerror = reject;
+  });
+}
+async function loadUsers(){ return (await dbAll('visitors')).sort((a,b)=>b.createdAt-a.createdAt); }
+async function saveUser(v){ await dbPut('visitors', v); }
+async function removeUser(id){ await dbDelete('visitors', id); }
+async function loadHistory(){ return (await dbAll('history')).sort((a,b)=>b.ts-a.ts); }
+async function saveHistoryEntry(h){ await dbPut('history', h); }
+
+/* =========================================================
+   MISC HELPERS
+   ========================================================= */
+function toast(msg, isError){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.style.borderColor = isError ? 'var(--red)' : 'var(--teal-dim)';
+  t.style.display='block';
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer=setTimeout(()=>{ t.style.display='none'; }, 2600);
+}
+function pad(n){ return n.toString().padStart(2,'0'); }
+function fmtDate(d){ return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()+543}`; }
+function fmtTime(d){ return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function refocusEnd(inputEl){
+  if(!inputEl) return;
+  inputEl.focus();
+  const v = inputEl.value; inputEl.value=''; inputEl.value=v;
+}
+
+/* =========================================================
+   FACE-API MODEL LOADING
+   ========================================================= */
+async function loadModels(){
+  try{
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    ]);
+    S.modelsLoaded = true; S.modelState='ok';
+  }catch(err){
+    console.error(err);
+    S.modelsLoaded = false; S.modelState='error';
+  }
+  refreshModelChip();
+}
+function refreshModelChip(){
+  document.querySelectorAll('.model-chip').forEach(chip=>{
+    chip.classList.remove('ok','bad','loading');
+    const label = chip.querySelector('span');
+    if(S.modelState==='ok'){ chip.classList.add('ok'); if(label) label.textContent='AI พร้อมใช้งาน'; }
+    else if(S.modelState==='error'){ chip.classList.add('bad'); if(label) label.textContent='โหลดโมเดลไม่สำเร็จ'; }
+    else { chip.classList.add('loading'); if(label) label.textContent='กำลังโหลดโมเดล AI...'; }
+  });
+}
+function modelChipHtml(){
+  return `<div class="model-chip"><span class="dot"></span><span>กำลังโหลดโมเดล AI...</span></div>`;
+}
+
+/* =========================================================
+   CAMERA + DETECTION
+   ========================================================= */
+async function initCamera(videoElId, streamKey){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:480, height:480 }, audio:false });
+    S[streamKey]=stream;
+    const v = document.getElementById(videoElId);
+    if(v){ v.srcObject = stream; await v.play().catch(()=>{}); }
+  }catch(e){
+    console.error(e);
+    const holder = document.getElementById(videoElId+'-holder');
+    if(holder){ holder.innerHTML = emptyCamHtml('ไม่สามารถเข้าถึงกล้องได้<br>กรุณาอนุญาตการใช้งานกล้อง'); }
+  }
+}
+async function stopStream(streamKey){
+  if(S[streamKey]){ S[streamKey].getTracks().forEach(t=>t.stop()); S[streamKey]=null; }
+}
+function emptyCamHtml(msg){
+  return `<div class="empty-cam">
+    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7h3l2-2h8l2 2h3v13H3z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    <span>${msg}</span></div>`;
+}
+function captureFromVideo(videoElId){
+  const v = document.getElementById(videoElId);
+  if(!v || !v.videoWidth) return null;
+  const size = 320;
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const s = Math.min(v.videoWidth, v.videoHeight);
+  const sx = (v.videoWidth - s)/2, sy = (v.videoHeight - s)/2;
+  ctx.drawImage(v, sx, sy, s, s, 0, 0, size, size);
+  return canvas.toDataURL('image/jpeg', 0.78);
+}
+async function detectFace(videoEl){
+  if(!S.modelsLoaded || !videoEl || !videoEl.videoWidth) return null;
+  const opts = new faceapi.TinyFaceDetectorOptions({ inputSize:224, scoreThreshold:0.5 });
+  try{
+    return await faceapi.detectSingleFace(videoEl, opts).withFaceLandmarks().withFaceDescriptor();
+  }catch(e){ return null; }
+}
+function drawOverlay(canvasEl, videoEl, result, label, color){
+  if(!canvasEl || !videoEl.videoWidth) return;
+  if(canvasEl.width !== videoEl.videoWidth) canvasEl.width = videoEl.videoWidth;
+  if(canvasEl.height !== videoEl.videoHeight) canvasEl.height = videoEl.videoHeight;
+  const ctx = canvasEl.getContext('2d');
+  ctx.clearRect(0,0,canvasEl.width, canvasEl.height);
+  if(!result) return;
+  const box = result.detection.box;
+  ctx.strokeStyle = color; ctx.lineWidth = 3;
+  ctx.strokeRect(box.x, box.y, box.width, box.height);
+  if(label){
+    ctx.font = '600 15px Prompt, sans-serif';
+    const w = ctx.measureText(label).width;
+    ctx.fillStyle = color;
+    ctx.fillRect(box.x, Math.max(0,box.y-26), w+16, 26);
+    ctx.fillStyle = '#04181c';
+    ctx.fillText(label, box.x+8, Math.max(16,box.y-7));
+  }
+}
+function rebuildMatcher(){
+  if(!S.visitors.length){ S.faceMatcher=null; return; }
+  const labeled = S.visitors.map(v=> new faceapi.LabeledFaceDescriptors(v.id, [new Float32Array(v.descriptor)]));
+  S.faceMatcher = new faceapi.FaceMatcher(labeled, MATCH_THRESHOLD);
+}
+
+/* ---- scan view detection loop ---- */
+async function scanLoopTick(){
+  const video = document.getElementById('video-scan');
+  const canvas = document.getElementById('canvas-scan');
+  const badge = document.getElementById('live-badge-scan');
+  if(!video || !video.videoWidth) return;
+  const result = await detectFace(video);
+  S.scanLive = result ? { descriptor: Array.from(result.descriptor) } : null;
+
+  let label='', color='#20b8d8', badgeText='กำลังค้นหาใบหน้า...', badgeClass='status-pill pill-idle';
+  if(result && S.faceMatcher){
+    const best = S.faceMatcher.findBestMatch(result.descriptor);
+    if(best.label !== 'unknown'){
+      const v = S.visitors.find(x=>x.id===best.label);
+      label = v ? v.name : 'พบข้อมูล';
+      color = '#3fd398';
+      badgeText = `ตรวจพบ: ${v ? v.name : 'ทราบตัวตน'}`;
+      badgeClass = 'status-pill pill-matched';
+    } else {
+      label='ไม่รู้จัก'; color='#ffb84d';
+      badgeText='พบใบหน้า • ไม่พบในฐานข้อมูล'; badgeClass='status-pill pill-nomatch';
+    }
+  } else if(result){
+    label='ตรวจพบใบหน้า'; color='#20b8d8';
+    badgeText='ตรวจพบใบหน้า'; badgeClass='status-pill pill-scanning';
+  }
+  drawOverlay(canvas, video, result, label, color);
+  if(badge){ badge.textContent = badgeText; badge.className = 'live-badge ' + badgeClass; }
+}
+async function startScanCamera(){
+  await initCamera('video-scan','camStream');
+  clearInterval(S.scanDetectTimer);
+  S.scanDetectTimer = setInterval(scanLoopTick, 500);
+}
+
+/* ---- register view detection loop ---- */
+async function regLoopTick(){
+  const video = document.getElementById('video-register');
+  const canvas = document.getElementById('canvas-register');
+  const badge = document.getElementById('live-badge-register');
+  if(!video || !video.videoWidth) return;
+  const result = await detectFace(video);
+  S.regLive = result ? { descriptor: Array.from(result.descriptor) } : null;
+  drawOverlay(canvas, video, result, result ? 'ตรวจพบใบหน้า' : '', '#20b8d8');
+  if(badge){
+    badge.textContent = result ? 'ตรวจพบใบหน้า • พร้อมถ่ายภาพ' : 'กำลังค้นหาใบหน้า...';
+    badge.className = 'live-badge status-pill ' + (result ? 'pill-scanning' : 'pill-idle');
+  }
+}
+async function startRegCamera(){
+  await initCamera('video-register','regCamStream');
+  clearInterval(S.regDetectTimer);
+  S.regDetectTimer = setInterval(regLoopTick, 500);
+}
+
+/* =========================================================
+   NAVIGATION
+   ========================================================= */
+async function goto(view){
+  await teardownView(S.view);
+  S.view = view;
+  resetViewState(view);
+  render();
+  if(view==='scan') setTimeout(startScanCamera, 30);
+  if(view==='register') setTimeout(startRegCamera, 30);
+}
+async function teardownView(view){
+  if(view==='scan'){ clearInterval(S.scanDetectTimer); S.scanDetectTimer=null; await stopStream('camStream'); }
+  if(view==='register'){ clearInterval(S.regDetectTimer); S.regDetectTimer=null; await stopStream('regCamStream'); }
+}
+function resetViewState(view){
+  if(view==='scan'){
+    S.scanCaptured=null; S.scanStatus='idle'; S.scanLive=null;
+    S.selectedMatchId=null; S.matchConfidence=null; S.manualSearch='';
+  }
+  if(view==='register'){
+    S.regCaptured=null; S.regError=''; S.regStatusOther=false; S.regLive=null;
+  }
+}
+function logout(){
+  teardownView(S.view);
+  S.role=null; S.username=null; S.loginError=''; S.view='login';
+  render();
+}
+
+/* =========================================================
+   AUTH
+   ========================================================= */
+function attemptLogin(){
+  const u = document.getElementById('login-user').value.trim();
+  const p = document.getElementById('login-pass').value;
+  const c = CREDS[S.loginRole];
+  if(u===c.user && p===c.pass){
+    S.role = S.loginRole; S.username = u; S.loginError='';
+    goto('scan');
+  } else {
+    S.loginError = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+    render();
+  }
+}
+
+/* =========================================================
+   RENDER: SHELL
+   ========================================================= */
+function iconCamera(){ return `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#04181c" stroke-width="1.8"><path d="M3 7h3l2-2h8l2 2h3v13H3z"/><circle cx="12" cy="13" r="3.5"/></svg>`; }
+
+function render(){
+  const app = document.getElementById('app');
+  if(S.view==='login'){ app.innerHTML = renderLogin(); attachLoginEvents(); refreshModelChip(); return; }
+
+  app.innerHTML = `
+    ${renderBrandbar()}
+    ${renderTabnav()}
+    <div id="view-slot">${renderCurrentView()}</div>
+    <div class="footnote">
+      ข้อมูลใบหน้า (descriptor) รูปถ่าย และประวัติเช็คอิน จัดเก็บใน IndexedDB ของเบราว์เซอร์เครื่องนี้เท่านั้น ไม่ส่งออกนอกเครื่อง<br>
+      หน้าจอเข้าสู่ระบบนี้เป็นการสาธิตแบ่งสิทธิ์การใช้งาน ไม่ใช่ระบบยืนยันตัวตนที่ปลอดภัยสำหรับใช้งานจริง — ควรทำระบบล็อกอินฝั่งเซิร์ฟเวอร์ก่อนใช้งานจริง
+    </div>
+  `;
+  refreshModelChip();
+  attachViewEvents();
+  if(S.view==='scan' && S.scanDetectTimer===null && !S.scanCaptured && S.scanStatus==='idle'){
+    // camera loop may need (re)starting after a full render triggered elsewhere
+  }
+}
+
+function renderBrandbar(){
+  return `
+  <div class="brandbar">
+    <div class="brand">
+      <div class="brand-mark">${iconCamera()}</div>
+      <div class="brand-text">
+        <div class="eyebrow">Visitor Access Control</div>
+        <h1>ระบบสแกนใบหน้าบุคคลภายนอก</h1>
+      </div>
+    </div>
+    <div class="brand-side">
+      ${modelChipHtml()}
+      <div class="session-chip">
+        <span class="dot"></span>
+        <span>เข้าสู่ระบบ: <b>${esc(S.username)}</b> (ผู้ดูแลระบบ)</span>
+        <button onclick="logout()">ออกจากระบบ</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderTabnav(){
+  const tabs = [{k:'scan', label:'สแกนใบหน้า'}];
+  if(S.role==='admin'){
+    tabs.push({k:'register', label:'ลงทะเบียนผู้ใช้ใหม่'});
+    tabs.push({k:'database', label:'ฐานข้อมูล / ประวัติ'});
+  }
+  return `<div class="tabnav">
+    ${tabs.map(t=>`<button class="${S.view===t.k?'active':''}" onclick="goto('${t.k}')">${t.label}</button>`).join('')}
+  </div>`;
+}
+
+function renderCurrentView(){
+  if(S.view==='scan') return renderScan();
+  if(S.view==='register') return renderRegister();
+  if(S.view==='database') return renderDatabase();
+  return '';
+}
+
+/* =========================================================
+   RENDER: LOGIN
+   ========================================================= */
+function renderLogin(){
+  return `
+  <div class="brandbar" style="justify-content:center;">
+    <div class="brand">
+      <div class="brand-mark">${iconCamera()}</div>
+      <div class="brand-text">
+        <div class="eyebrow">Visitor Access Control</div>
+        <h1>ระบบสแกนใบหน้าบุคคลภายนอก</h1>
+      </div>
+    </div>
+  </div>
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">${iconCamera()}</div>
+      <h2>เข้าสู่ระบบ</h2>
+      <p class="desc">กรุณาเข้าสู่ระบบเพื่อเริ่มใช้งานจุดสแกนใบหน้า</p>
+      ${S.loginError ? `<div class="error-msg">${esc(S.loginError)}</div>` : ''}
+      <div class="field">
+        <label>ชื่อผู้ใช้</label>
+        <input id="login-user" type="text" placeholder="username" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>รหัสผ่าน</label>
+        <input id="login-pass" type="password" placeholder="password" autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" onclick="attemptLogin()">เข้าสู่ระบบ</button>
+      <div style="display:flex;justify-content:center;margin-top:14px;">${modelChipHtml()}</div>
+      <div class="hint-box">
+        DEMO CREDENTIALS (ตัวอย่างเพื่อสาธิตเท่านั้น ไม่ปลอดภัยสำหรับใช้งานจริง)<br>
+        admin &nbsp;/&nbsp; user: admin &nbsp; pass: admin123
+      </div>
+    </div>
+  </div>`;
+}
+function attachLoginEvents(){
+  const pass = document.getElementById('login-pass');
+  if(pass){ pass.addEventListener('keydown', e=>{ if(e.key==='Enter') attemptLogin(); }); }
+}
+
+/* =========================================================
+   RENDER: FACE SCAN
+   ========================================================= */
+function renderScan(){
+  const cap = S.scanCaptured;
+  const now = new Date();
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <h2>จุดสแกนใบหน้า</h2>
+      <span class="sub">FACE SCANNER · AI LIVE MATCH</span>
+    </div>
+    <div class="scan-grid">
+      <div>
+        <div class="camera-frame" id="video-scan-holder">
+          ${cap
+            ? `<img src="${cap.photo}" alt="captured face">`
+            : `<video id="video-scan" autoplay playsinline muted></video>
+               <canvas class="overlay-canvas" id="canvas-scan"></canvas>
+               <span class="live-badge status-pill pill-idle" id="live-badge-scan">กำลังเปิดกล้อง...</span>
+               <div class="reticle"><span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span></div>
+               <div class="scanline"></div>`
+          }
+        </div>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          ${S.scanStatus==='idle'
+            ? `<button class="btn btn-primary" ${S.modelsLoaded?'':'disabled'} onclick="captureAndVerifyScan()">จับภาพและตรวจสอบด้วย AI</button>`
+            : `<button class="btn btn-ghost" onclick="retryScan()">สแกนใหม่</button>`}
+        </div>
+      </div>
+      <div>
+        <div class="readout">
+          <div class="row"><b>สถานะ</b> <span>${renderStatusPill()}</span></div>
+          <div class="row"><b>วันที่</b> <span class="val">${fmtDate(now)}</span></div>
+          <div class="row"><b>เวลา</b> <span class="val">${fmtTime(now)}</span></div>
+          <div class="row"><b>ผู้ปฏิบัติงาน</b> <span class="val">${esc(S.username)}</span></div>
+        </div>
+        <div id="scan-action-slot">${renderScanAction()}</div>
+      </div>
+    </div>
+  </div>`;
+}
+function refreshScanOnly(){
+  const slot = document.getElementById('scan-action-slot');
+  if(!slot) return;
+  slot.innerHTML = renderScanAction();
+  refocusEnd(document.getElementById('manual-search-input'));
+}
+
+function renderStatusPill(){
+  if(S.scanStatus==='idle') return `<span class="status-pill pill-scanning">กำลังสแกนสด</span>`;
+  if(S.scanStatus==='matched') return `<span class="status-pill pill-matched">พบข้อมูลตรงกัน</span>`;
+  if(S.scanStatus==='nomatch') return `<span class="status-pill pill-nomatch">ไม่พบในฐานข้อมูล</span>`;
+  if(S.scanStatus==='logged') return `<span class="status-pill pill-logged">บันทึกเข้าระบบแล้ว</span>`;
+  return '';
+}
+
+function renderScanAction(){
+  if(S.scanStatus==='idle'){
+    return `<div class="hint-box">จัดใบหน้าให้อยู่ในกรอบให้ชัดเจน ระบบ AI จะตรวจจับใบหน้าแบบสด แล้วกด “จับภาพและตรวจสอบด้วย AI” เพื่อเทียบกับฐานข้อมูล</div>`;
+  }
+  if(S.scanStatus==='matched'){
+    const m = S.visitors.find(u=>u.id===S.selectedMatchId);
+    if(!m) return renderNomatchPanel();
+    return `
+      <div class="panel" style="padding:16px; margin-top:14px; background:var(--bg-void);">
+        <div style="display:flex; gap:12px; align-items:center;">
+          <img src="${m.photo}" class="match-thumb" style="width:52px;height:52px;">
+          <div style="flex:1;">
+            <div style="font-weight:700; font-family:var(--font-display);">${esc(m.name)}</div>
+            <div style="font-size:12.5px; color:var(--ink-dim);">${esc(m.status)} · ${esc(m.reason||'-')}</div>
+          </div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:14px;" onclick="confirmLog()">ยืนยันและบันทึกการเข้า-ออก</button>
+        <button class="btn-link" onclick="S.scanStatus='nomatch'; refreshScanOnly();">ผลไม่ถูกต้อง? ค้นหาด้วยตนเอง</button>
+      </div>`;
+  }
+  if(S.scanStatus==='nomatch'){
+    return renderNomatchPanel();
+  }
+  if(S.scanStatus==='logged'){
+    return `
+      <div class="panel" style="padding:16px; margin-top:14px; background:var(--bg-void); border-color:var(--green);">
+        <p style="font-size:13.5px; color:var(--green); margin:0 0 12px; font-weight:600;">บันทึกข้อมูลเรียบร้อย</p>
+        <button class="btn btn-ghost" onclick="retryScan()">สแกนคนถัดไป</button>
+      </div>`;
+  }
+  return '';
+}
+
+function renderNomatchPanel(){
+  const q = (S.manualSearch||'').toLowerCase();
+  const list = S.visitors.filter(v=>v.name.toLowerCase().includes(q));
+  return `
+  <div class="panel" style="padding:16px; margin-top:14px; background:var(--bg-void);">
+    <p style="font-size:13.5px; color:var(--amber); margin:0 0 10px; font-weight:600;">ระบบ AI ไม่พบใบหน้านี้ในฐานข้อมูล (หรือความเชื่อมั่นต่ำเกินไป)</p>
+    <label style="font-size:12.5px;color:var(--ink-dim); display:block; margin-bottom:8px;">ค้นหาด้วยตนเอง (สำรอง)</label>
+    <input id="manual-search-input" type="text" placeholder="พิมพ์ชื่อ-นามสกุล..." value="${esc(S.manualSearch)}"
+      oninput="S.manualSearch=this.value; refreshScanOnly();"
+      style="width:100%; background:var(--bg-panel); border:1px solid var(--line); color:var(--ink); padding:10px 12px; border-radius:8px; font-family:var(--font-body); font-size:13.5px;">
+    <div class="match-list">
+      ${list.length ? list.map(u=>`
+        <div class="match-row ${S.selectedMatchId===u.id?'selected':''}" onclick="pickManualMatch('${u.id}')">
+          <img src="${u.photo}" class="match-thumb">
+          <div class="match-info"><div class="nm">${esc(u.name)}</div><div class="meta">${esc(u.status)}</div></div>
+        </div>`).join('') : `<div style="padding:16px; text-align:center; color:var(--ink-faint); font-size:13px;">ไม่พบชื่อที่ตรงกัน</div>`}
+    </div>
+    <div style="display:flex; gap:10px; margin-top:14px;">
+      <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="retryScan()">สแกนใหม่</button>
+      <button class="btn btn-primary btn-sm" style="flex:1;" ${S.selectedMatchId?'':'disabled'} onclick="acceptManualMatch()">ยืนยันตรงกัน</button>
+    </div>
+    ${S.role==='admin' ? `<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="goto('register')">ไปยังหน้าลงทะเบียนผู้ใช้ใหม่</button>`
+                        : `<div style="font-size:12px;color:var(--ink-faint);margin-top:8px;">หากยังไม่พบ กรุณาแจ้งผู้ดูแลระบบเพื่อลงทะเบียนผู้ใช้ใหม่</div>`}
+  </div>`;
+}
+function pickManualMatch(id){ S.selectedMatchId = id; refreshScanOnly(); }
+function acceptManualMatch(){
+  if(!S.selectedMatchId) return;
+  S.matchConfidence = null;
+  S.scanStatus = 'matched';
+  const slot = document.getElementById('scan-action-slot');
+  if(slot) slot.innerHTML = renderScanAction();
+}
+
+async function captureAndVerifyScan(){
+  if(!S.modelsLoaded){ toast('โมเดล AI ยังโหลดไม่เสร็จ กรุณารอสักครู่', true); return; }
+  if(!S.scanLive){ toast('ยังไม่พบใบหน้าในเฟรม กรุณาจัดใบหน้าให้อยู่ในกรอบ', true); return; }
+  const photo = captureFromVideo('video-scan');
+  const descriptor = S.scanLive.descriptor;
+  clearInterval(S.scanDetectTimer); S.scanDetectTimer=null;
+  await stopStream('camStream');
+  S.scanCaptured = { photo, descriptor };
+
+  if(S.faceMatcher){
+    const best = S.faceMatcher.findBestMatch(new Float32Array(descriptor));
+    if(best.label !== 'unknown'){
+      S.selectedMatchId = best.label;
+      S.matchConfidence = Math.max(0, Math.round((1 - best.distance) * 100));
+      S.scanStatus = 'matched';
+    } else {
+      S.selectedMatchId = null; S.matchConfidence = null; S.scanStatus = 'nomatch';
+    }
+  } else {
+    S.selectedMatchId = null; S.scanStatus = 'nomatch';
+  }
+  render();
+}
+async function retryScan(){
+  resetViewState('scan');
+  render();
+  setTimeout(startScanCamera, 30);
+}
+async function confirmLog(){
+  const m = S.visitors.find(u=>u.id===S.selectedMatchId);
+  if(!m) return;
+  const recent = S.history.find(h => h.visitorId===m.id && (Date.now() - h.ts) < RECENT_LOG_WINDOW_MS);
+  if(recent && !confirm(`เพิ่งบันทึกรายการของ "${m.name}" ไปเมื่อไม่นานมานี้ ต้องการบันทึกซ้ำหรือไม่?`)) return;
+
+  const now = new Date();
+  const entry = {
+    id: uid(), visitorId:m.id, name:m.name, status:m.status, reason:m.reason||'',
+    photo: (S.scanCaptured && S.scanCaptured.photo) || m.photo,
+    confidence: S.matchConfidence,
+    date: fmtDate(now), time: fmtTime(now), ts: now.getTime(),
+    verifiedBy: S.username
+  };
+  S.history.unshift(entry);
+  await saveHistoryEntry(entry);
+  S.scanStatus = 'logged';
+  render();
+  toast('บันทึกการเข้า-ออกเรียบร้อย');
+}
+
+/* =========================================================
+   RENDER: REGISTER
+   ========================================================= */
+function renderRegister(){
+  const cap = S.regCaptured;
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <h2>ลงทะเบียนผู้ใช้ใหม่</h2>
+      <span class="sub">NEW USER REGISTRATION</span>
+    </div>
+    <div class="reg-grid">
+      <div>
+        <div class="photo-box" id="video-register-holder">
+          ${cap
+            ? `<img src="${cap.photo}">`
+            : `<video id="video-register" autoplay playsinline muted></video>
+               <canvas class="overlay-canvas" id="canvas-register"></canvas>
+               <span class="live-badge status-pill pill-idle" id="live-badge-register">กำลังเปิดกล้อง...</span>`
+          }
+        </div>
+        <div style="display:flex; gap:10px; margin-top:12px;">
+          ${!cap
+            ? `<button class="btn btn-primary" ${S.modelsLoaded?'':'disabled'} onclick="doRegCapture()">ถ่ายภาพใบหน้า</button>`
+            : `<button class="btn btn-ghost" onclick="retryRegCapture()">ถ่ายใหม่</button>`}
+        </div>
+      </div>
+      <div>
+        ${S.regError ? `<div class="error-msg">${esc(S.regError)}</div>` : ''}
+        <div class="field">
+          <label>ชื่อ-นามสกุล</label>
+          <input id="reg-name" type="text" placeholder="เช่น สมชาย ใจดี">
+        </div>
+        <div class="two-col">
+          <div class="field">
+            <label>สถานะ</label>
+            <select id="reg-status" onchange="onRegStatusChange(this.value)">
+              ${STATUS_OPTIONS.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" id="reg-status-other-wrap" style="${S.regStatusOther?'':'display:none;'}">
+            <label>ระบุสถานะ</label>
+            <input id="reg-status-other" type="text" placeholder="ระบุ...">
+          </div>
+        </div>
+        <div class="field">
+          <label>เหตุผลในการเข้ามา</label>
+          <textarea id="reg-reason" placeholder="เช่น มาติดต่อธุรการ / รับ-ส่งนักเรียน"></textarea>
+        </div>
+        <button class="btn btn-primary" ${cap ? '' : 'disabled'} onclick="submitRegister()">บันทึกข้อมูลผู้ใช้</button>
+        ${!cap ? `<div class="hint-box">ต้องถ่ายภาพใบหน้าก่อนจึงจะบันทึกได้ (ใช้สำหรับสร้างข้อมูลใบหน้าเพื่อจดจำ)</div>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+function onRegStatusChange(v){
+  S.regStatusOther = (v==='อื่นๆ');
+  const wrap = document.getElementById('reg-status-other-wrap');
+  if(wrap) wrap.style.display = S.regStatusOther ? '' : 'none';
+}
+async function doRegCapture(){
+  if(!S.modelsLoaded){ toast('โมเดล AI ยังโหลดไม่เสร็จ กรุณารอสักครู่', true); return; }
+  if(!S.regLive){ toast('ยังไม่พบใบหน้าในเฟรม กรุณาจัดใบหน้าให้อยู่ในกรอบ', true); return; }
+  const photo = captureFromVideo('video-register');
+  S.regCaptured = { photo, descriptor: S.regLive.descriptor };
+  clearInterval(S.regDetectTimer); S.regDetectTimer=null;
+  await stopStream('regCamStream');
+  render();
+}
+async function retryRegCapture(){
+  S.regCaptured=null; S.regLive=null; render();
+  setTimeout(startRegCamera, 30);
+}
+async function submitRegister(){
+  if(!S.regCaptured){ S.regError='กรุณาถ่ายภาพใบหน้าก่อนบันทึก'; render(); return; }
+  const name = document.getElementById('reg-name').value.trim();
+  const statusSel = document.getElementById('reg-status').value;
+  const statusOther = document.getElementById('reg-status-other')?.value.trim();
+  const status = statusSel==='อื่นๆ' ? (statusOther || 'อื่นๆ') : statusSel;
+  const reason = document.getElementById('reg-reason').value.trim();
+
+  if(!name){ S.regError='กรุณากรอกชื่อ-นามสกุล'; render(); return; }
+
+  const rec = {
+    id: uid(), name, status, reason,
+    descriptor: S.regCaptured.descriptor,
+    photo: S.regCaptured.photo,
+    createdAt: Date.now()
+  };
+  S.visitors.unshift(rec);
+  await saveUser(rec);
+  rebuildMatcher();
+  toast('ลงทะเบียนผู้ใช้ใหม่เรียบร้อย');
+  S.regCaptured=null; S.regError=''; S.regStatusOther=false; S.regLive=null;
+  render();
+  setTimeout(startRegCamera, 30);
+}
+
+/* =========================================================
+   RENDER: DATABASE
+   ========================================================= */
+function renderDatabase(){
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <h2>ฐานข้อมูล</h2>
+      <span class="sub">DATABASE · HISTORY</span>
+    </div>
+    <div class="subtabs">
+      <button class="${S.dbTab==='users'?'active':''}" onclick="setDbTab('users')">รายชื่อผู้ลงทะเบียน</button>
+      <button class="${S.dbTab==='history'?'active':''}" onclick="setDbTab('history')">ประวัติบันทึก</button>
+    </div>
+    <div id="db-body">${S.dbTab==='users' ? renderDbUsers() : renderDbHistory()}</div>
+    <div class="db-actions" style="margin-top:16px;">
+      <button class="btn btn-ghost btn-sm" onclick="exportData()">ส่งออกข้อมูล (JSON)</button>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">นำเข้าข้อมูล</button>
+      <input type="file" id="import-file" accept="application/json" style="display:none" onchange="importData(event)">
+    </div>
+  </div>`;
+}
+function setDbTab(t){ S.dbTab=t; S.dbSearch=''; S.dbDateFilter=''; refreshDbOnly(); }
+function refreshDbOnly(){
+  const body = document.getElementById('db-body');
+  if(!body) return;
+  document.querySelectorAll('.subtabs button').forEach(b=>b.classList.remove('active'));
+  const idx = S.dbTab==='users' ? 0 : 1;
+  const btn = document.querySelectorAll('.subtabs button')[idx];
+  if(btn) btn.classList.add('active');
+  body.innerHTML = S.dbTab==='users' ? renderDbUsers() : renderDbHistory();
+  refocusEnd(document.getElementById('db-search-input'));
+}
+
+function renderDbUsers(){
+  const q = (S.dbSearch||'').toLowerCase();
+  const list = S.visitors.filter(u=>u.name.toLowerCase().includes(q) || u.status.toLowerCase().includes(q));
+  return `
+  <div class="search-row">
+    <input id="db-search-input" type="text" placeholder="ค้นหาชื่อ-นามสกุล หรือ สถานะ..." value="${esc(S.dbSearch)}" oninput="S.dbSearch=this.value; refreshDbOnly();">
+  </div>
+  ${list.length===0 ? emptyState('ยังไม่มีผู้ใช้ที่ลงทะเบียน') : `
+  <table>
+    <thead><tr><th></th><th>ชื่อ-นามสกุล</th><th>สถานะ</th><th>เหตุผล</th><th></th></tr></thead>
+    <tbody>
+      ${list.map(u=>`
+        <tr>
+          <td><img src="${u.photo}" class="row-thumb"></td>
+          <td>${esc(u.name)}</td>
+          <td><span class="badge">${esc(u.status)}</span></td>
+          <td style="color:var(--ink-dim);">${esc(u.reason||'-')}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}')">ลบ</button></td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`}`;
+}
+function renderDbHistory(){
+  const q = (S.dbSearch||'').toLowerCase();
+  let list = S.history.filter(h=>h.name.toLowerCase().includes(q));
+  if(S.dbDateFilter){ list = list.filter(h=>h.date===S.dbDateFilter); }
+  const dates = [...new Set(S.history.map(h=>h.date))];
+  return `
+  <div class="search-row">
+    <input id="db-search-input" type="text" placeholder="ค้นหาชื่อ..." value="${esc(S.dbSearch)}" oninput="S.dbSearch=this.value; refreshDbOnly();">
+    <select onchange="S.dbDateFilter=this.value; refreshDbOnly();">
+      <option value="">ทุกวันที่</option>
+      ${dates.map(d=>`<option value="${esc(d)}" ${S.dbDateFilter===d?'selected':''}>${esc(d)}</option>`).join('')}
+    </select>
+  </div>
+  ${list.length===0 ? emptyState('ยังไม่มีประวัติการบันทึก') : `
+  <table>
+    <thead><tr><th>#</th><th>ชื่อ-นามสกุล</th><th>สถานะ</th><th>เหตุผล</th><th>ความเชื่อมั่น</th><th>วันที่</th><th>เวลา</th><th>ผู้ยืนยัน</th></tr></thead>
+    <tbody>
+      ${list.map((h,i)=>`
+        <tr>
+          <td style="color:var(--ink-faint); font-family:var(--font-mono);">${String(i+1).padStart(3,'0')}</td>
+          <td>${esc(h.name)}</td>
+          <td><span class="badge">${esc(h.status)}</span></td>
+          <td style="color:var(--ink-dim);">${esc(h.reason||'-')}</td>
+          <td style="font-family:var(--font-mono);">${h.confidence!=null ? h.confidence+'%' : 'ด้วยตนเอง'}</td>
+          <td style="font-family:var(--font-mono);">${esc(h.date)}</td>
+          <td style="font-family:var(--font-mono);">${esc(h.time)}</td>
+          <td style="color:var(--ink-dim);">${esc(h.verifiedBy||'-')}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`}`;
+}
+function emptyState(msg){
+  return `<div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 7h3l2-2h8l2 2h3v13H3z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    <p>${esc(msg)}</p>
+  </div>`;
+}
+async function deleteUser(id){
+  if(!confirm('ยืนยันการลบผู้ใช้นี้ออกจากฐานข้อมูลใบหน้า?')) return;
+  S.visitors = S.visitors.filter(u=>u.id!==id);
+  await removeUser(id);
+  rebuildMatcher();
+  toast('ลบผู้ใช้เรียบร้อย');
+  refreshDbOnly();
+}
+
+/* ---- export / import backup ---- */
+function exportData(){
+  const data = { visitors:S.visitors, history:S.history, exportedAt: Date.now() };
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `face-checkin-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+}
+async function importData(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(Array.isArray(data.visitors)){
+      for(const v of data.visitors){ await saveUser(v); }
+    }
+    if(Array.isArray(data.history)){
+      for(const h of data.history){ await saveHistoryEntry(h); }
+    }
+    S.visitors = await loadUsers();
+    S.history = await loadHistory();
+    rebuildMatcher();
+    toast('นำเข้าข้อมูลสำเร็จ');
+    refreshDbOnly();
+  }catch(err){
+    toast('นำเข้าข้อมูลไม่สำเร็จ: ไฟล์ไม่ถูกต้อง', true);
+  }
+  e.target.value = '';
+}
+
+/* =========================================================
+   MISC EVENT BIND (placeholder for future global bindings)
+   ========================================================= */
+function attachViewEvents(){ /* inline handlers used throughout; nothing else to bind */ }
+
+/* =========================================================
+   BOOT
+   ========================================================= */
+async function boot(){
+  const app = document.getElementById('app');
+  app.innerHTML = `<div class="login-wrap"><div style="color:var(--ink-dim); font-family:var(--font-mono); font-size:13px;">กำลังโหลดระบบ...</div></div>`;
+  await openDB();
+  S.visitors = await loadUsers();
+  S.history = await loadHistory();
+  rebuildMatcher();
+  render();
+  loadModels(); // fire and forget; UI updates via refreshModelChip()
+}
+boot();
+</script>
+</body>
+</html>
