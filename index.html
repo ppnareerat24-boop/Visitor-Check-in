@@ -63,11 +63,16 @@ body{
 .session-chip b{color:var(--ink);font-weight:600;}
 .session-chip button{background:none;border:none;color:var(--red);font-family:var(--font-body);font-size:13px;cursor:pointer;margin-left:6px;padding:4px 8px;border-radius:6px;}
 .session-chip button:hover{background:rgba(255,107,87,0.12);}
-.model-chip{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;padding:7px 12px;border-radius:100px;border:1px solid var(--line);background:var(--bg-panel);color:var(--ink-dim);}
-.model-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--ink-faint);}
+.model-chip{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;padding:7px 12px;border-radius:100px;border:1px solid var(--line);background:var(--bg-panel);color:var(--ink-dim);white-space:nowrap;max-width:100%;}
+.model-chip span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.model-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--ink-faint);flex-shrink:0;}
 .model-chip.ok .dot{background:var(--green);box-shadow:0 0 6px var(--green);}
 .model-chip.bad .dot{background:var(--red);}
 .model-chip.loading .dot{background:var(--amber);animation:pulse 1.2s ease-in-out infinite;}
+@media (max-width:480px){
+  .brand-side{width:100%;}
+  .brand-side .model-chip{flex:1 1 100%;justify-content:center;}
+}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
 
 /* ---------- tab nav ---------- */
