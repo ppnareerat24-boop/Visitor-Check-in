@@ -847,7 +847,7 @@ async function submitInlineRegister(){
   S.scanStatus = 'logged';
   S.scanRegError=''; S.scanRegStatusOther=false;
   render();
-  toast('ลงทะเบียนและบันทึกการเข้าเรียบร้อย');
+  toast('ลงทะเบียนและบันทึกเรียบร้อย');
 }
 function pickManualMatch(id){ S.selectedMatchId = id; refreshScanOnly(); }
 function acceptManualMatch(){
@@ -927,7 +927,7 @@ function renderDatabase(){
     </div>
     <div class="subtabs">
       <button class="${S.dbTab==='users'?'active':''}" onclick="setDbTab('users')">รายชื่อผู้ลงทะเบียน</button>
-      <button class="${S.dbTab==='history'?'active':''}" onclick="setDbTab('history')">ประวัติบันทึก</button>
+      <button class="${S.dbTab==='history'?'active':''}" onclick="setDbTab('history')">ประวัติการเข้า-ออก</button>
     </div>
     <div id="db-body">${S.dbTab==='users' ? renderDbUsers() : renderDbHistory()}</div>
     <div class="db-actions" id="db-actions" style="margin-top:16px;">${renderDbActions()}</div>
