@@ -63,8 +63,8 @@ body{
 .session-chip b{color:var(--ink);font-weight:600;}
 .session-chip button{background:none;border:none;color:var(--red);font-family:var(--font-body);font-size:13px;cursor:pointer;margin-left:6px;padding:4px 8px;border-radius:6px;}
 .session-chip button:hover{background:rgba(255,107,87,0.12);}
-.model-chip{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;padding:7px 12px;border-radius:100px;border:1px solid var(--line);background:var(--bg-panel);color:var(--ink-dim);white-space:nowrap;max-width:100%;}
-.model-chip span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.model-chip{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;padding:7px 12px;border-radius:100px;border:1px solid var(--line);background:var(--bg-panel);color:var(--ink-dim);white-space:nowrap;max-width:100%;min-width:0;overflow:hidden;flex-shrink:1;}
+.model-chip span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex-shrink:1;}
 .model-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--ink-faint);flex-shrink:0;}
 .model-chip.ok .dot{background:var(--green);box-shadow:0 0 6px var(--green);}
 .model-chip.bad .dot{background:var(--red);}
@@ -921,12 +921,16 @@ function renderDatabase(){
       <button class="${S.dbTab==='history'?'active':''}" onclick="setDbTab('history')">ประวัติบันทึก</button>
     </div>
     <div id="db-body">${S.dbTab==='users' ? renderDbUsers() : renderDbHistory()}</div>
-    <div class="db-actions" style="margin-top:16px;">
-      <button class="btn btn-ghost btn-sm" onclick="exportData()">ส่งออกข้อมูล (Excel)</button>
-      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">นำเข้าข้อมูล (JSON)</button>
-      <input type="file" id="import-file" accept="application/json" style="display:none" onchange="importData(event)">
-    </div>
+    <div class="db-actions" id="db-actions" style="margin-top:16px;">${renderDbActions()}</div>
+    <input type="file" id="import-file" accept="application/json" style="display:none" onchange="importData(event)">
   </div>`;
+}
+function renderDbActions(){
+  return `
+    <button class="btn btn-ghost btn-sm" onclick="exportData()">ส่งออกข้อมูล (Excel)</button>
+    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">นำเข้าข้อมูล (JSON)</button>
+    ${S.dbTab==='history' ? `<button class="btn btn-danger btn-sm" onclick="clearHistory()">ล้างประวัติทั้งหมด</button>` : ''}
+  `;
 }
 function setDbTab(t){ S.dbTab=t; S.dbSearch=''; S.dbDateFilter=''; refreshDbOnly(); }
 function refreshDbOnly(){
@@ -937,6 +941,8 @@ function refreshDbOnly(){
   const btn = document.querySelectorAll('.subtabs button')[idx];
   if(btn) btn.classList.add('active');
   body.innerHTML = S.dbTab==='users' ? renderDbUsers() : renderDbHistory();
+  const actions = document.getElementById('db-actions');
+  if(actions) actions.innerHTML = renderDbActions();
   refocusEnd(document.getElementById('db-search-input'));
 }
 
@@ -1010,6 +1016,28 @@ async function deleteUser(id){
   rebuildMatcher();
   toast('ลบผู้ใช้เรียบร้อย');
   refreshDbOnly();
+}
+
+async function clearHistory(){
+  if(!S.history.length){ toast('ไม่มีประวัติให้ล้าง'); return; }
+  if(!confirm(`ยืนยันการล้างประวัติการเข้า-ออกทั้งหมด (${S.history.length} รายการ)?\nการกระทำนี้ไม่สามารถย้อนกลับได้ และจะลบออกจากทุกอุปกรณ์`)) return;
+  if(!confirm('ยืนยันอีกครั้ง: ต้องการลบประวัติทั้งหมดจริงหรือไม่?')) return;
+  try{
+    const snap = await HISTORY_COL.get();
+    const docs = snap.docs;
+    const chunkSize = 450; // Firestore batch limit is 500 ops
+    for(let i=0; i<docs.length; i+=chunkSize){
+      const batch = fsdb.batch();
+      docs.slice(i, i+chunkSize).forEach(d=>batch.delete(d.ref));
+      await batch.commit();
+    }
+    S.history = [];
+    toast('ล้างประวัติเรียบร้อย');
+    refreshDbOnly();
+  }catch(err){
+    console.error(err);
+    toast('ล้างประวัติไม่สำเร็จ กรุณาลองใหม่', true);
+  }
 }
 
 /* ---- export (Excel) / import (JSON backup) ---- */
