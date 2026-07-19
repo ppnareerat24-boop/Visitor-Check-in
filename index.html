@@ -253,7 +253,7 @@ const S = {
   scanCaptured:null,      // {photo, descriptor}
   scanStatus:'idle',      // idle | matched | nomatch | logged
   selectedMatchId:null,
-  manualSearch:'',
+  manualSearch:'', scanVisitReason:'',
   scanRegError:'', scanRegStatusOther:false,
 
   // database view
@@ -509,7 +509,7 @@ async function teardownView(view){
 function resetViewState(view){
   if(view==='scan'){
     S.scanCaptured=null; S.scanStatus='idle'; S.scanLive=null;
-    S.selectedMatchId=null; S.manualSearch='';
+    S.selectedMatchId=null; S.manualSearch=''; S.scanVisitReason='';
     S.scanRegError=''; S.scanRegStatusOther=false;
   }
 }
@@ -712,8 +712,12 @@ function renderScanAction(){
           <img src="${m.photo}" class="match-thumb" style="width:52px;height:52px;">
           <div style="flex:1;">
             <div style="font-weight:700; font-family:var(--font-display);">${esc(m.name)}</div>
-            <div style="font-size:12.5px; color:var(--ink-dim);">${esc(m.status)} · ${esc(m.reason||'-')}</div>
+            <div style="font-size:12.5px; color:var(--ink-dim);">${esc(m.status)}</div>
           </div>
+        </div>
+        <div class="field" style="margin-top:14px; margin-bottom:0;">
+          <label>เหตุผลในการเข้ามาครั้งนี้</label>
+          <textarea id="scan-visit-reason" placeholder="เช่น มาติดต่อธุรการ / รับ-ส่งนักเรียน" oninput="S.scanVisitReason=this.value;">${esc(S.scanVisitReason)}</textarea>
         </div>
         <button class="btn btn-primary" style="margin-top:14px;" onclick="confirmLog()">ยืนยันและบันทึกการเข้า-ออก</button>
         <button class="btn-link" onclick="S.scanStatus='nomatch'; refreshScanOnly();">ผลไม่ถูกต้อง? ค้นหาด้วยตนเอง</button>
@@ -848,6 +852,8 @@ async function submitInlineRegister(){
 function pickManualMatch(id){ S.selectedMatchId = id; refreshScanOnly(); }
 function acceptManualMatch(){
   if(!S.selectedMatchId) return;
+  const m = S.visitors.find(u=>u.id===S.selectedMatchId);
+  S.scanVisitReason = (m && m.reason) || '';
   S.scanStatus = 'matched';
   const slot = document.getElementById('scan-action-slot');
   if(slot) slot.innerHTML = renderScanAction();
@@ -866,6 +872,8 @@ async function captureAndVerifyScan(){
     const best = S.faceMatcher.findBestMatch(new Float32Array(descriptor));
     if(best.label !== 'unknown'){
       S.selectedMatchId = best.label;
+      const mv = S.visitors.find(u=>u.id===best.label);
+      S.scanVisitReason = (mv && mv.reason) || '';
       S.scanStatus = 'matched';
     } else {
       S.selectedMatchId = null; S.scanStatus = 'nomatch';
@@ -887,8 +895,9 @@ async function confirmLog(){
   if(recent && !confirm(`เพิ่งบันทึกรายการของ "${m.name}" ไปเมื่อไม่นานมานี้ ต้องการบันทึกซ้ำหรือไม่?`)) return;
 
   const now = new Date();
+  const visitReason = (S.scanVisitReason||'').trim() || m.reason || '';
   const entry = {
-    id: uid(), visitorId:m.id, name:m.name, status:m.status, reason:m.reason||'',
+    id: uid(), visitorId:m.id, name:m.name, status:m.status, reason:visitReason,
     photo: (S.scanCaptured && S.scanCaptured.photo) || m.photo,
     date: fmtDate(now), time: fmtTime(now), ts: now.getTime(),
     verifiedBy: S.username
