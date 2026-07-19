@@ -6,6 +6,10 @@
 <title>ระบบสแกนใบหน้าบุคคลภายนอก</title>
 <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+<!-- Firebase (ฐานข้อมูลกลาง + ระบบล็อกอินจริง — ใช้ร่วมกันได้จากทุกอุปกรณ์) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
@@ -224,13 +228,46 @@ tbody tr:hover{background:var(--bg-panel-raised);}
 /* =========================================================
    CONFIG
    ========================================================= */
-const CREDS = {
-  admin:{ user:'admin', pass:'admin123' }
-};
 const STATUS_OPTIONS = ['บุคคลภายนอก','ผู้ปกครอง','ผู้รับเหมา/ช่าง','แขกผู้มาติดต่อ','อื่นๆ'];
 const MODEL_URL = './models';
 const MATCH_THRESHOLD = 0.5;      // ยิ่งต่ำยิ่งเข้มงวด
 const RECENT_LOG_WINDOW_MS = 2 * 60 * 1000;
+
+/* =========================================================
+   FIREBASE CONFIG — ต้องแก้เป็นค่าของโปรเจกต์ตัวเอง
+   วิธีขอค่านี้ (ฟรี, ใช้เวลา ~5 นาที):
+   1) เปิด https://console.firebase.google.com -> "Add project" -> ตั้งชื่อโปรเจกต์
+   2) ในหน้าโปรเจกต์ กด ไอคอน "</>" (Web app) -> ตั้งชื่อ -> Register app
+      จะได้ก้อน config แบบนี้มา ให้ก็อปมาแทนที่ค่าด้านล่าง
+   3) เมนูซ้าย -> Build -> Firestore Database -> Create database
+      -> เลือก "Start in production mode" (ปลอดภัยกว่า test mode)
+      แล้วไปที่แท็บ Rules ใส่กฎนี้เพื่อบังคับให้ต้องล็อกอินก่อนถึงจะอ่าน/เขียนได้:
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /{document=**} {
+              allow read, write: if request.auth != null;
+            }
+          }
+        }
+   4) เมนูซ้าย -> Build -> Authentication -> Get started
+      -> แท็บ Sign-in method -> เปิดใช้งาน "Email/Password"
+      -> แท็บ Users -> Add user -> ใส่อีเมล+รหัสผ่านของผู้ดูแลระบบ (สร้างกี่คนก็ได้)
+      บัญชีเหล่านี้คือรหัสล็อกอินจริงของระบบ (ไม่มีรหัสผ่านที่มองเห็นได้ในโค้ดอีกต่อไป)
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const fsdb = firebase.firestore();
+const fsauth = firebase.auth();
+const VISITORS_COL = fsdb.collection('visitors');
+const HISTORY_COL = fsdb.collection('history');
 
 /* =========================================================
    STATE
@@ -238,10 +275,10 @@ const RECENT_LOG_WINDOW_MS = 2 * 60 * 1000;
 const S = {
   view:'login',
   role:null, username:null,
-  loginRole:'admin', loginError:'',
+  loginError:'',
 
   modelsLoaded:false, modelState:'loading', // loading | ok | error
-  storageState:'checking', // checking | persisted | not-persisted | unsupported
+  storageState:'checking', // checking | connected | error (สถานะการเชื่อมต่อฐานข้อมูลกลาง Firestore)
 
   visitors:[],   // {id,name,status,reason,descriptor:[128],photo,createdAt}
   history:[],    // {id,visitorId,name,status,reason,photo,date,time,ts,verifiedBy}
@@ -261,82 +298,58 @@ const S = {
 };
 
 /* =========================================================
-   INDEXEDDB STORAGE (local to this browser only)
+   FIRESTORE STORAGE (ฐานข้อมูลกลาง — ใช้ร่วมกันได้ทุกอุปกรณ์แบบเรียลไทม์)
    ========================================================= */
-const DB_NAME = 'face_checkin_db_v2';
-const DB_VERSION = 1;
-let db;
-function openDB(){
-  return new Promise((resolve, reject)=>{
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e)=>{
-      const d = e.target.result;
-      if(!d.objectStoreNames.contains('visitors')) d.createObjectStore('visitors', {keyPath:'id'});
-      if(!d.objectStoreNames.contains('history')) d.createObjectStore('history', {keyPath:'id'});
-    };
-    req.onsuccess = (e)=>{ db = e.target.result; resolve(db); };
-    req.onerror = reject;
-  });
+async function loadUsers(){
+  const snap = await VISITORS_COL.get();
+  return snap.docs.map(d=>d.data()).sort((a,b)=>b.createdAt-a.createdAt);
 }
-function txStore(name, mode='readonly'){ return db.transaction(name, mode).objectStore(name); }
-function dbAll(name){
-  return new Promise((resolve, reject)=>{
-    const out=[]; const req = txStore(name).openCursor();
-    req.onsuccess = (e)=>{ const cur=e.target.result; if(cur){ out.push(cur.value); cur.continue(); } else resolve(out); };
-    req.onerror = reject;
-  });
+async function saveUser(v){ await VISITORS_COL.doc(v.id).set(v); return v; }
+async function removeUser(id){ await VISITORS_COL.doc(id).delete(); }
+async function loadHistory(){
+  const snap = await HISTORY_COL.get();
+  return snap.docs.map(d=>d.data()).sort((a,b)=>b.ts-a.ts);
 }
-function dbPut(name, value){
-  return new Promise((resolve, reject)=>{
-    const req = txStore(name,'readwrite').put(value);
-    req.onsuccess = ()=>resolve(value); req.onerror = reject;
-  });
-}
-function dbDelete(name, id){
-  return new Promise((resolve, reject)=>{
-    const req = txStore(name,'readwrite').delete(id);
-    req.onsuccess = ()=>resolve(); req.onerror = reject;
-  });
-}
-async function loadUsers(){ return (await dbAll('visitors')).sort((a,b)=>b.createdAt-a.createdAt); }
-async function saveUser(v){ return await dbPut('visitors', v); }
-async function removeUser(id){ return await dbDelete('visitors', id); }
-async function loadHistory(){ return (await dbAll('history')).sort((a,b)=>b.ts-a.ts); }
-async function saveHistoryEntry(h){ return await dbPut('history', h); }
+async function saveHistoryEntry(h){ await HISTORY_COL.doc(h.id).set(h); return h; }
 
-/* ---- request persistent storage so the browser won't silently evict data
-   under disk pressure (this is what actually keeps IndexedDB data "safe") ---- */
-async function ensurePersistentStorage(){
-  if(!(navigator.storage && navigator.storage.persist)){
-    S.storageState = 'unsupported';
-    refreshStorageChip();
-    return;
-  }
-  try{
-    const already = await navigator.storage.persisted();
-    if(already){
-      S.storageState = 'persisted';
-    } else {
-      const granted = await navigator.storage.persist();
-      S.storageState = granted ? 'persisted' : 'not-persisted';
-    }
-  }catch(e){
-    S.storageState = 'unsupported';
-  }
-  refreshStorageChip();
+/* ---- realtime listeners: เมื่ออุปกรณ์อื่นเพิ่ม/ลบ/แก้ข้อมูล ทุกจุดสแกนจะอัปเดตอัตโนมัติ ---- */
+let unsubVisitors=null, unsubHistory=null;
+function startRealtimeSync(){
+  if(unsubVisitors) unsubVisitors();
+  if(unsubHistory) unsubHistory();
+  unsubVisitors = VISITORS_COL.onSnapshot(
+    snap=>{
+      S.visitors = snap.docs.map(d=>d.data()).sort((a,b)=>b.createdAt-a.createdAt);
+      rebuildMatcher();
+      S.storageState = 'connected'; refreshStorageChip();
+      if(S.view==='database' && S.dbTab==='users') refreshDbOnly();
+    },
+    err=>{ console.error(err); S.storageState='error'; refreshStorageChip(); toast('การเชื่อมต่อฐานข้อมูลกลางขัดข้อง', true); }
+  );
+  unsubHistory = HISTORY_COL.onSnapshot(
+    snap=>{
+      S.history = snap.docs.map(d=>d.data()).sort((a,b)=>b.ts-a.ts);
+      S.storageState = 'connected'; refreshStorageChip();
+      if(S.view==='database' && S.dbTab==='history') refreshDbOnly();
+    },
+    err=>{ console.error(err); S.storageState='error'; refreshStorageChip(); }
+  );
+}
+function stopRealtimeSync(){
+  if(unsubVisitors){ unsubVisitors(); unsubVisitors=null; }
+  if(unsubHistory){ unsubHistory(); unsubHistory=null; }
 }
 function refreshStorageChip(){
   document.querySelectorAll('.storage-chip').forEach(chip=>{
     chip.classList.remove('ok','bad','loading');
     const label = chip.querySelector('span:last-child');
-    if(S.storageState==='persisted'){ chip.classList.add('ok'); if(label) label.textContent='บันทึกถาวรในเบราว์เซอร์'; }
-    else if(S.storageState==='not-persisted'){ chip.classList.add('bad'); if(label) label.textContent='พื้นที่จัดเก็บอาจถูกล้างได้ — แนะนำสำรองข้อมูล'; }
-    else if(S.storageState==='unsupported'){ chip.classList.add('bad'); if(label) label.textContent='เบราว์เซอร์ไม่รองรับการล็อกพื้นที่ถาวร'; }
-    else { chip.classList.add('loading'); if(label) label.textContent='กำลังตรวจสอบพื้นที่จัดเก็บ...'; }
+    if(S.storageState==='connected'){ chip.classList.add('ok'); if(label) label.textContent='เชื่อมต่อฐานข้อมูลกลางแล้ว (sync ทุกอุปกรณ์)'; }
+    else if(S.storageState==='error'){ chip.classList.add('bad'); if(label) label.textContent='เชื่อมต่อฐานข้อมูลกลางไม่สำเร็จ'; }
+    else { chip.classList.add('loading'); if(label) label.textContent='กำลังเชื่อมต่อฐานข้อมูลกลาง...'; }
   });
 }
 function storageChipHtml(){
-  return `<div class="model-chip storage-chip"><span class="dot"></span><span>กำลังตรวจสอบพื้นที่จัดเก็บ...</span></div>`;
+  return `<div class="model-chip storage-chip"><span class="dot"></span><span>กำลังเชื่อมต่อฐานข้อมูลกลาง...</span></div>`;
 }
 
 /* =========================================================
@@ -515,24 +528,85 @@ function resetViewState(view){
 }
 function logout(){
   teardownView(S.view);
-  S.role=null; S.username=null; S.loginError=''; S.view='login';
-  render();
+  fsauth.signOut().catch(err=>console.error(err));
+  // onAuthStateChanged (ดูฟังก์ชัน setupAuthListener) จะจัดการเปลี่ยนหน้าจอกลับไปหน้าล็อกอินให้เอง
 }
 
 /* =========================================================
-   AUTH
+   AUTH (Firebase Authentication — ล็อกอินจริง ตรวจสอบฝั่งเซิร์ฟเวอร์ของ Google)
    ========================================================= */
-function attemptLogin(){
-  const u = document.getElementById('login-user').value.trim();
-  const p = document.getElementById('login-pass').value;
-  const c = CREDS[S.loginRole];
-  if(u===c.user && p===c.pass){
-    S.role = S.loginRole; S.username = u; S.loginError='';
-    goto('scan');
-  } else {
-    S.loginError = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+function authErrorMessage(err){
+  const code = err && err.code;
+  const map = {
+    'auth/invalid-email':'รูปแบบอีเมลไม่ถูกต้อง',
+    'auth/user-disabled':'บัญชีนี้ถูกระงับการใช้งาน',
+    'auth/user-not-found':'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
+    'auth/wrong-password':'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
+    'auth/invalid-credential':'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
+    'auth/invalid-login-credentials':'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
+    'auth/missing-password':'กรุณากรอกรหัสผ่าน',
+    'auth/too-many-requests':'พยายามเข้าสู่ระบบผิดหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่',
+    'auth/network-request-failed':'เชื่อมต่อเครือข่ายไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต',
+    'auth/configuration-not-found':'ยังไม่ได้เปิดใช้งาน Email/Password sign-in ใน Firebase Console (Authentication → Sign-in method)',
+  };
+  return map[code] || 'เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่';
+}
+async function attemptLogin(){
+  const email = document.getElementById('login-user').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  if(!email || !pass){ S.loginError='กรุณากรอกอีเมลและรหัสผ่าน'; render(); return; }
+  S.loginError='';
+  const btn = document.getElementById('login-submit-btn');
+  if(btn){ btn.disabled=true; btn.textContent='กำลังเข้าสู่ระบบ...'; }
+  try{
+    await fsauth.signInWithEmailAndPassword(email, pass);
+    // สำเร็จ: onAuthStateChanged จะพาเข้าแอปให้เอง
+  }catch(err){
+    console.error(err);
+    S.loginError = authErrorMessage(err);
     render();
   }
+}
+async function forgotPassword(){
+  const emailEl = document.getElementById('login-user');
+  const email = emailEl ? emailEl.value.trim() : '';
+  if(!email){ S.loginError='กรุณากรอกอีเมลที่ช่องด้านบนก่อน แล้วกด "ลืมรหัสผ่าน?" อีกครั้ง'; render(); return; }
+  try{
+    await fsauth.sendPasswordResetEmail(email);
+    toast('ส่งอีเมลสำหรับตั้งรหัสผ่านใหม่แล้ว กรุณาตรวจสอบกล่องจดหมาย');
+  }catch(err){
+    console.error(err);
+    toast(authErrorMessage(err), true);
+  }
+}
+function setupAuthListener(){
+  fsauth.onAuthStateChanged(async (user)=>{
+    if(user){
+      S.role='admin'; S.username=user.email; S.loginError='';
+      if(S.view==='login'){
+        try{
+          S.visitors = await loadUsers();
+          S.history = await loadHistory();
+          rebuildMatcher();
+          S.storageState='connected';
+        }catch(err){
+          console.error(err);
+          S.storageState='error';
+          toast('เชื่อมต่อฐานข้อมูลกลาง (Firestore) ไม่สำเร็จ ตรวจสอบ firebaseConfig และ Firestore Rules', true);
+        }
+        startRealtimeSync();
+        S.view='scan';
+        render();
+        setTimeout(startScanCamera, 30);
+      }
+    } else {
+      stopRealtimeSync();
+      teardownView(S.view);
+      S.role=null; S.username=null; S.view='login';
+      S.visitors=[]; S.history=[]; S.faceMatcher=null;
+      render();
+    }
+  });
 }
 
 /* =========================================================
@@ -549,9 +623,9 @@ function render(){
     ${renderTabnav()}
     <div id="view-slot">${renderCurrentView()}</div>
     <div class="footnote">
-      ข้อมูลใบหน้า (descriptor) รูปถ่าย และประวัติเช็คอิน จัดเก็บใน IndexedDB ของเบราว์เซอร์เครื่องนี้เท่านั้น (ระบบขอสิทธิ์ "พื้นที่จัดเก็บถาวร" จากเบราว์เซอร์อัตโนมัติเพื่อลดโอกาสข้อมูลถูกล้าง) ไม่ส่งออกนอกเครื่อง<br>
-      ข้อมูลจะหายได้หากล้างแคช/ข้อมูลเว็บไซต์ของเบราว์เซอร์ หรือเปลี่ยนไปใช้เบราว์เซอร์/อุปกรณ์อื่น — แนะนำกดปุ่ม "ส่งออกข้อมูล (Excel)" ในหน้าฐานข้อมูลเป็นประจำเพื่อสำรองข้อมูลไว้<br>
-      หน้าจอเข้าสู่ระบบนี้เป็นการสาธิตแบ่งสิทธิ์การใช้งาน ไม่ใช่ระบบยืนยันตัวตนที่ปลอดภัยสำหรับใช้งานจริง — ควรทำระบบล็อกอินฝั่งเซิร์ฟเวอร์ก่อนใช้งานจริง
+      ข้อมูลใบหน้า (descriptor) รูปถ่าย และประวัติเช็คอิน จัดเก็บบน Firebase Firestore (ฐานข้อมูลกลางบนคลาวด์) จึงเห็นข้อมูลชุดเดียวกันได้จากทุกอุปกรณ์/จุดสแกนแบบเรียลไทม์<br>
+      การเข้าสู่ระบบใช้ Firebase Authentication ตรวจสอบฝั่งเซิร์ฟเวอร์จริง — ผู้ดูแลระบบสร้าง/ลบผู้ใช้ได้ที่ Firebase Console → Authentication → Users และควรตั้ง Firestore Security Rules ให้ต้อง <code>request.auth != null</code> ก่อนอ่าน/เขียนได้ (ดูตัวอย่างกฎในคอมเมนต์ firebaseConfig)<br>
+      ยังแนะนำกดปุ่ม "ส่งออกข้อมูล (Excel)" ในหน้าฐานข้อมูลเป็นประจำเพื่อสำรองข้อมูลไว้เผื่อกรณีฉุกเฉิน
     </div>
   `;
   refreshModelChip();
@@ -621,18 +695,21 @@ function renderLogin(){
       <p class="desc">กรุณาเข้าสู่ระบบเพื่อเริ่มใช้งานจุดสแกนใบหน้า</p>
       ${S.loginError ? `<div class="error-msg">${esc(S.loginError)}</div>` : ''}
       <div class="field">
-        <label>ชื่อผู้ใช้</label>
-        <input id="login-user" type="text" placeholder="username" autocomplete="username">
+        <label>อีเมล</label>
+        <input id="login-user" type="email" placeholder="you@example.com" autocomplete="username">
       </div>
       <div class="field">
         <label>รหัสผ่าน</label>
         <input id="login-pass" type="password" placeholder="password" autocomplete="current-password">
       </div>
-      <button class="btn btn-primary" onclick="attemptLogin()">เข้าสู่ระบบ</button>
+      <button class="btn btn-primary" id="login-submit-btn" onclick="attemptLogin()">เข้าสู่ระบบ</button>
+      <div style="text-align:center; margin-top:12px;">
+        <button class="btn-link" type="button" onclick="forgotPassword()">ลืมรหัสผ่าน?</button>
+      </div>
       <div style="display:flex;justify-content:center;gap:8px;margin-top:14px;flex-wrap:wrap;">${modelChipHtml()}${storageChipHtml()}</div>
       <div class="hint-box">
-        DEMO CREDENTIALS (ตัวอย่างเพื่อสาธิตเท่านั้น ไม่ปลอดภัยสำหรับใช้งานจริง)<br>
-        admin &nbsp;/&nbsp; user: admin &nbsp; pass: admin123
+        ระบบนี้ใช้ Firebase Authentication ยืนยันตัวตนจริง (ตรวจสอบฝั่งเซิร์ฟเวอร์ของ Google ไม่มีรหัสผ่านฝังอยู่ในโค้ด)<br>
+        ผู้ดูแลระบบสร้างบัญชีผู้ใช้ได้ที่ Firebase Console → Authentication → Users → Add user
       </div>
     </div>
   </div>`;
@@ -847,7 +924,7 @@ async function submitInlineRegister(){
   S.scanStatus = 'logged';
   S.scanRegError=''; S.scanRegStatusOther=false;
   render();
-  toast('ลงทะเบียนและบันทึกเรียบร้อย');
+  toast('ลงทะเบียนและบันทึกการเข้าเรียบร้อย');
 }
 function pickManualMatch(id){ S.selectedMatchId = id; refreshScanOnly(); }
 function acceptManualMatch(){
@@ -927,7 +1004,7 @@ function renderDatabase(){
     </div>
     <div class="subtabs">
       <button class="${S.dbTab==='users'?'active':''}" onclick="setDbTab('users')">รายชื่อผู้ลงทะเบียน</button>
-      <button class="${S.dbTab==='history'?'active':''}" onclick="setDbTab('history')">ประวัติการเข้า-ออก</button>
+      <button class="${S.dbTab==='history'?'active':''}" onclick="setDbTab('history')">ประวัติบันทึก</button>
     </div>
     <div id="db-body">${S.dbTab==='users' ? renderDbUsers() : renderDbHistory()}</div>
     <div class="db-actions" id="db-actions" style="margin-top:16px;">${renderDbActions()}</div>
@@ -1119,13 +1196,9 @@ function attachViewEvents(){ /* inline handlers used throughout; nothing else to
 async function boot(){
   const app = document.getElementById('app');
   app.innerHTML = `<div class="login-wrap"><div style="color:var(--ink-dim); font-family:var(--font-mono); font-size:13px;">กำลังโหลดระบบ...</div></div>`;
-  await openDB();
-  S.visitors = await loadUsers();
-  S.history = await loadHistory();
-  rebuildMatcher();
-  render();
+  render(); // แสดงหน้าล็อกอินทันที ไม่ต้องรอ auth
   loadModels(); // fire and forget; UI updates via refreshModelChip()
-  ensurePersistentStorage(); // fire and forget; UI updates via refreshStorageChip()
+  setupAuthListener(); // เมื่อยืนยันตัวตนสำเร็จ จะโหลดข้อมูลจาก Firestore และพาเข้าแอปให้เอง
 }
 boot();
 </script>
